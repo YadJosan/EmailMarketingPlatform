@@ -216,7 +216,13 @@ export default function CampaignsPage() {
                     <td className="px-6 py-4 text-sm text-gray-500">
                       {new Date(campaign.createdAt).toLocaleDateString()}
                     </td>
-                    <td className="px-6 py-4 text-right">
+                    <td className="px-6 py-4 text-right space-x-3">
+                      <button
+                        onClick={() => router.push(`/workspace/${workspaceId}/campaigns/${campaign.id}`)}
+                        className="text-purple-600 hover:text-purple-700 text-sm font-medium"
+                      >
+                        View Stats
+                      </button>
                       <button
                         onClick={async () => {
                           try {
@@ -233,7 +239,7 @@ export default function CampaignsPage() {
                         }}
                         className="text-blue-600 hover:text-blue-700 text-sm font-medium"
                       >
-                        View
+                        Edit
                       </button>
                     </td>
                   </tr>

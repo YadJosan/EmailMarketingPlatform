@@ -42,11 +42,6 @@ export class CampaignsController {
     return this.campaignsService.findByWorkspace(workspaceId);
   }
 
-  @Get(':workspaceId/:id')
-  findOne(@Param('workspaceId') workspaceId: string, @Param('id') id: string) {
-    return this.campaignsService.findOne(id, workspaceId);
-  }
-
   @Put(':workspaceId/:id')
   update(
     @Param('workspaceId') workspaceId: string,
@@ -108,5 +103,43 @@ export class CampaignsController {
   @Get(':workspaceId/:id/recipients/count')
   getRecipientCount(@Param('workspaceId') workspaceId: string, @Param('id') id: string) {
     return this.campaignsService.getRecipientCount(id, workspaceId);
+  }
+
+  @Get(':workspaceId/:id/stats')
+  getStats(@Param('workspaceId') workspaceId: string, @Param('id') id: string) {
+    return this.campaignsService.getCampaignStats(id, workspaceId);
+  }
+
+  @Get(':workspaceId/:id/recipients')
+  getRecipients(@Param('workspaceId') workspaceId: string, @Param('id') id: string) {
+    return this.campaignsService.getCampaignRecipients(id, workspaceId);
+  }
+
+  @Get(':workspaceId/:id/recipients/:contactId')
+  getRecipientDetails(
+    @Param('workspaceId') workspaceId: string,
+    @Param('id') id: string,
+    @Param('contactId') contactId: string,
+  ) {
+    return this.campaignsService.getRecipientDetails(id, workspaceId, contactId);
+  }
+
+  @Post(':workspaceId/:id/retry-failed')
+  retryFailed(@Param('workspaceId') workspaceId: string, @Param('id') id: string) {
+    return this.campaignsService.retryFailedEmails(id, workspaceId);
+  }
+
+  @Post(':workspaceId/:id/recipients/:contactId/retry')
+  retryRecipient(
+    @Param('workspaceId') workspaceId: string,
+    @Param('id') id: string,
+    @Param('contactId') contactId: string,
+  ) {
+    return this.campaignsService.retryRecipient(id, workspaceId, contactId);
+  }
+
+  @Get(':workspaceId/:id')
+  findOne(@Param('workspaceId') workspaceId: string, @Param('id') id: string) {
+    return this.campaignsService.findOne(id, workspaceId);
   }
 }

@@ -7,6 +7,7 @@ import { Campaign, CampaignStatus } from './entities/campaign.entity';
 import { CampaignEmail, EmailStatus } from './entities/campaign-email.entity';
 import { SegmentsService } from '../contacts/segments.service';
 import { Contact } from '../contacts/entities/contact.entity';
+import { TrackingService } from '../tracking/tracking.service';
 
 @Injectable()
 export class CampaignsService {
@@ -20,6 +21,7 @@ export class CampaignsService {
     @InjectQueue('email-send')
     private emailQueue: Queue,
     private segmentsService: SegmentsService,
+    private trackingService: TrackingService,
   ) {}
 
   async create(workspaceId: string, data: Partial<Campaign>) {
@@ -203,9 +205,12 @@ export class CampaignsService {
 
       // Replace merge tags in subject and content
       const subject = this.replaceMergeTags(campaign.subject, contact);
-      const html = this.renderEmail(campaign.content, contact);
+      let html = this.renderEmail(campaign.content, contact);
+      
+      // Add tracking pixel and link tracking
+      html = this.trackingService.addTrackingToEmail(html, campaignEmail.id);
 
-      // Enqueue email job
+      // Enqueue email job with exponential backoff retry
       await this.emailQueue.add('send', {
         campaignEmailId: campaignEmail.id,
         to: contact.email,
@@ -214,6 +219,14 @@ export class CampaignsService {
         subject,
         html,
         replyTo: campaign.replyTo,
+      }, {
+        attempts: parseInt(process.env.EMAIL_RETRY_ATTEMPTS || '5'),
+        backoff: {
+          type: 'exponential',
+          delay: parseInt(process.env.EMAIL_RETRY_DELAY || '2000'),
+        },
+        removeOnComplete: 100,
+        removeOnFail: 500,
       });
     }
 
@@ -267,5 +280,245 @@ export class CampaignsService {
     }
     
     return result;
+  }
+
+  async getCampaignStats(campaignId: string, workspaceId: string) {
+    const campaign = await this.findOne(campaignId, workspaceId);
+
+    const stats = await this.campaignEmailRepo
+      .createQueryBuilder('ce')
+      .select('ce.status', 'status')
+      .addSelect('COUNT(*)', 'count')
+      .addSelect('SUM(ce.openCount)', 'totalOpens')
+      .addSelect('SUM(ce.clickCount)', 'totalClicks')
+      .addSelect('COUNT(DISTINCT CASE WHEN ce.openCount > 0 THEN ce.id END)', 'uniqueOpens')
+      .addSelect('COUNT(DISTINCT CASE WHEN ce.clickCount > 0 THEN ce.id END)', 'uniqueClicks')
+      .where('ce.campaignId = :campaignId', { campaignId })
+      .groupBy('ce.status')
+      .getRawMany();
+
+    const totals = await this.campaignEmailRepo
+      .createQueryBuilder('ce')
+      .select('COUNT(*)', 'total')
+      .addSelect('SUM(ce.openCount)', 'totalOpens')
+      .addSelect('SUM(ce.clickCount)', 'totalClicks')
+      .addSelect('COUNT(DISTINCT CASE WHEN ce.openCount > 0 THEN ce.id END)', 'uniqueOpens')
+      .addSelect('COUNT(DISTINCT CASE WHEN ce.clickCount > 0 THEN ce.id END)', 'uniqueClicks')
+      .where('ce.campaignId = :campaignId', { campaignId })
+      .getRawOne();
+
+    const total = parseInt(totals.total) || 0;
+    const uniqueOpens = parseInt(totals.uniqueOpens) || 0;
+    const uniqueClicks = parseInt(totals.uniqueClicks) || 0;
+
+    return {
+      campaign: {
+        id: campaign.id,
+        name: campaign.name,
+        status: campaign.status,
+        sentAt: campaign.sentAt,
+      },
+      summary: {
+        total,
+        sent: stats.find((s) => s.status === EmailStatus.SENT)?.count || 0,
+        delivered: stats.find((s) => s.status === EmailStatus.DELIVERED)?.count || 0,
+        bounced: stats.find((s) => s.status === EmailStatus.BOUNCED)?.count || 0,
+        complained: stats.find((s) => s.status === EmailStatus.COMPLAINED)?.count || 0,
+        uniqueOpens,
+        uniqueClicks,
+        totalOpens: parseInt(totals.totalOpens) || 0,
+        totalClicks: parseInt(totals.totalClicks) || 0,
+        openRate: total > 0 ? ((uniqueOpens / total) * 100).toFixed(2) : '0.00',
+        clickRate: total > 0 ? ((uniqueClicks / total) * 100).toFixed(2) : '0.00',
+        clickToOpenRate: uniqueOpens > 0 ? ((uniqueClicks / uniqueOpens) * 100).toFixed(2) : '0.00',
+      },
+      byStatus: stats,
+    };
+  }
+
+  async getCampaignRecipients(campaignId: string, workspaceId: string) {
+    const campaign = await this.findOne(campaignId, workspaceId);
+
+    const recipients = await this.campaignEmailRepo.find({
+      where: { campaignId },
+      relations: ['contact'],
+      order: { sentAt: 'DESC' },
+    });
+
+    return recipients.map((r) => ({
+      id: r.id,
+      contact: {
+        id: r.contact.id,
+        email: r.contact.email,
+        firstName: r.contact.firstName,
+        lastName: r.contact.lastName,
+      },
+      status: r.status,
+      sentAt: r.sentAt,
+      deliveredAt: r.deliveredAt,
+      openCount: r.openCount,
+      clickCount: r.clickCount,
+      lastOpenedAt: r.lastOpenedAt,
+      lastClickedAt: r.lastClickedAt,
+    }));
+  }
+
+  async getRecipientDetails(campaignId: string, workspaceId: string, contactId: string) {
+    const campaign = await this.findOne(campaignId, workspaceId);
+
+    const campaignEmail = await this.campaignEmailRepo.findOne({
+      where: { campaignId, contactId },
+      relations: ['contact', 'events'],
+    });
+
+    if (!campaignEmail) {
+      throw new NotFoundException('Recipient not found in this campaign');
+    }
+
+    return {
+      id: campaignEmail.id,
+      contact: {
+        id: campaignEmail.contact.id,
+        email: campaignEmail.contact.email,
+        firstName: campaignEmail.contact.firstName,
+        lastName: campaignEmail.contact.lastName,
+      },
+      status: campaignEmail.status,
+      sentAt: campaignEmail.sentAt,
+      deliveredAt: campaignEmail.deliveredAt,
+      openCount: campaignEmail.openCount,
+      clickCount: campaignEmail.clickCount,
+      lastOpenedAt: campaignEmail.lastOpenedAt,
+      lastClickedAt: campaignEmail.lastClickedAt,
+      events: campaignEmail.events.map((e) => ({
+        type: e.eventType,
+        timestamp: e.createdAt,
+        metadata: e.metadata,
+      })),
+    };
+  }
+
+
+  async retryFailedEmails(campaignId: string, workspaceId: string) {
+    const campaign = await this.findOne(campaignId, workspaceId);
+
+    // Get all failed emails
+    const failedEmails = await this.campaignEmailRepo.find({
+      where: { 
+        campaignId, 
+        status: EmailStatus.FAILED 
+      },
+      relations: ['contact'],
+    });
+
+    if (failedEmails.length === 0) {
+      return { 
+        message: 'No failed emails to retry',
+        retried: 0 
+      };
+    }
+
+    let retriedCount = 0;
+
+    for (const campaignEmail of failedEmails) {
+      const contact = campaignEmail.contact;
+
+      // Verify contact still belongs to workspace
+      if (contact.workspaceId !== workspaceId) {
+        continue;
+      }
+
+      // Reset status to pending
+      campaignEmail.status = EmailStatus.PENDING;
+      campaignEmail.error = null;
+      await this.campaignEmailRepo.save(campaignEmail);
+
+      // Replace merge tags
+      const subject = this.replaceMergeTags(campaign.subject, contact);
+      const html = this.renderEmail(campaign.content, contact);
+
+      // Re-enqueue with retry configuration
+      await this.emailQueue.add('send', {
+        campaignEmailId: campaignEmail.id,
+        to: contact.email,
+        from: campaign.fromEmail,
+        fromName: campaign.fromName,
+        subject,
+        html,
+        replyTo: campaign.replyTo,
+      }, {
+        attempts: parseInt(process.env.EMAIL_RETRY_ATTEMPTS || '5'),
+        backoff: {
+          type: 'exponential',
+          delay: parseInt(process.env.EMAIL_RETRY_DELAY || '2000'),
+        },
+        removeOnComplete: 100,
+        removeOnFail: 500,
+      });
+
+      retriedCount++;
+    }
+
+    return {
+      message: `Retrying ${retriedCount} failed emails`,
+      retried: retriedCount,
+      total: failedEmails.length,
+    };
+  }
+
+  async retryRecipient(campaignId: string, workspaceId: string, contactId: string) {
+    const campaign = await this.findOne(campaignId, workspaceId);
+
+    const campaignEmail = await this.campaignEmailRepo.findOne({
+      where: { campaignId, contactId },
+      relations: ['contact'],
+    });
+
+    if (!campaignEmail) {
+      throw new NotFoundException('Recipient not found in this campaign');
+    }
+
+    // Verify contact belongs to workspace
+    if (campaignEmail.contact.workspaceId !== workspaceId) {
+      throw new ForbiddenException('Contact does not belong to this workspace');
+    }
+
+    // Reset status
+    campaignEmail.status = EmailStatus.PENDING;
+    campaignEmail.error = null;
+    await this.campaignEmailRepo.save(campaignEmail);
+
+    const contact = campaignEmail.contact;
+    const subject = this.replaceMergeTags(campaign.subject, contact);
+    const html = this.renderEmail(campaign.content, contact);
+
+    // Re-enqueue
+    await this.emailQueue.add('send', {
+      campaignEmailId: campaignEmail.id,
+      to: contact.email,
+      from: campaign.fromEmail,
+      fromName: campaign.fromName,
+      subject,
+      html,
+      replyTo: campaign.replyTo,
+    }, {
+      attempts: parseInt(process.env.EMAIL_RETRY_ATTEMPTS || '5'),
+      backoff: {
+        type: 'exponential',
+        delay: parseInt(process.env.EMAIL_RETRY_DELAY || '2000'),
+      },
+      removeOnComplete: 100,
+      removeOnFail: 500,
+    });
+
+    return {
+      message: 'Email queued for retry',
+      campaignEmailId: campaignEmail.id,
+      contact: {
+        email: contact.email,
+        firstName: contact.firstName,
+        lastName: contact.lastName,
+      },
+    };
   }
 }

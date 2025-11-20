@@ -5,7 +5,11 @@ import { EmailService } from '../../email/email.service';
 
 @Injectable()
 @Processor('email-send', {
-  limiter: { max: 14, duration: 1000 }, // SES rate limit
+  limiter: { 
+    max: parseInt(process.env.EMAIL_RATE_LIMIT || '14'), 
+    duration: 1000 
+  },
+  concurrency: parseInt(process.env.EMAIL_CONCURRENCY || '5'),
 })
 export class EmailSendProcessor extends WorkerHost {
   constructor(private emailService: EmailService) {

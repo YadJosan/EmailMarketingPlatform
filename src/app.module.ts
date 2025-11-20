@@ -10,6 +10,7 @@ import { TemplatesModule } from './templates/templates.module';
 import { EmailModule } from './email/email.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { FormsModule } from './forms/forms.module';
+import { TrackingModule } from './tracking/tracking.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { FormsModule } from './forms/forms.module';
     EmailModule,
     AnalyticsModule,
     FormsModule,
+    TrackingModule,
   ],
 })
 export class AppModule {}

@@ -6,8 +6,10 @@ import { EmailEvent } from '../../analytics/entities/email-event.entity';
 
 export enum EmailStatus {
   PENDING = 'pending',
+  SENDING = 'sending',
   SENT = 'sent',
   DELIVERED = 'delivered',
+  FAILED = 'failed',
   BOUNCED = 'bounced',
   COMPLAINED = 'complained',
 }
@@ -46,6 +48,12 @@ export class CampaignEmail extends BaseEntity {
 
   @Column({ type: 'timestamp', nullable: true })
   lastClickedAt: Date;
+
+  @Column({ nullable: true })
+  messageId: string;
+
+  @Column({ type: 'text', nullable: true })
+  error: string;
 
   @OneToMany(() => EmailEvent, event => event.campaignEmail)
   events: EmailEvent[];

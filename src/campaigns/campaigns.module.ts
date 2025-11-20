@@ -9,6 +9,7 @@ import { CampaignsController } from './campaigns.controller';
 import { EmailSendProcessor } from './processors/email-send.processor';
 import { EmailModule } from '../email/email.module';
 import { ContactsModule } from '../contacts/contacts.module';
+import { TrackingModule } from '../tracking/tracking.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { ContactsModule } from '../contacts/contacts.module';
     BullModule.registerQueue({ name: 'email-send' }),
     EmailModule,
     ContactsModule,
+    TrackingModule,
   ],
   providers: [CampaignsService, EmailSendProcessor],
   controllers: [CampaignsController],
